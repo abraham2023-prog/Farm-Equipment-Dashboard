@@ -4,8 +4,13 @@ import numpy as np
 import time
 from datetime import datetime, timedelta
 import plotly.express as px
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import joblib
+import os
 
-# Set page config FIRST
+# Set page config
 st.set_page_config(
     page_title="🚜 Farm Equipment Dashboard",
     page_icon="🚜",
@@ -48,6 +53,19 @@ if 'machines' not in st.session_state:
         }
     }
 
+# Predictive maintenance functions
+def load_or_train_model(data):
+    if os.path.exists('predictive_maintenance_model.pkl'):
+        model = joblib.load('predictive_maintenance_model.pkl')
+    else:
+        X = data[['Last_Service_Hours_Ago', 'Tasks_Since_Service', 'Previous_Failures', 'Hours_Since_Last_Failure']]
+        y = data['Failure_Label']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        joblib.dump(model, 'predictive_maintenance_model.pkl')
+    return model
+
 # Dashboard Header
 st.title("🚜 Farm Machinery Monitoring Dashboard")
 st.markdown("### Real-time Equipment Tracking and Maintenance Scheduling")
@@ -62,35 +80,31 @@ with st.sidebar:
         key="machine_selector"
     )
     
-    # Service record form with UNIQUE key
+    # Service record form
     with st.expander("Service Records"):
         machine_data = st.session_state.machines[selected_machine]
         
-        with st.form("service_update_form"):  # Changed key
+        with st.form("service_update_form"):
             st.write(f"### {selected_machine.replace('_', ' ')}")
             service_date = st.date_input(
                 "Last Service Date", 
-                value=datetime.strptime(machine_data['last_service'], '%Y-%m-%d'),
-                key="service_date"
+                value=datetime.strptime(machine_data['last_service'], '%Y-%m-%d')
             )
             hours_used = st.number_input(
                 "Operating Hours", 
                 min_value=0, 
-                value=machine_data['hours_used'],
-                key="hours_used"
+                value=machine_data['hours_used']
             )
             fuel_level = st.slider(
                 "Fuel Level (%)", 
                 min_value=0, 
                 max_value=100, 
-                value=machine_data['fuel_level'],
-                key="fuel_level"
+                value=machine_data['fuel_level']
             )
             status = st.selectbox(
                 "Status", 
                 ["Active", "Maintenance Needed", "Out of Service"],
-                index=["Active", "Maintenance Needed", "Out of Service"].index(machine_data['status']),
-                key="status_select"
+                index=["Active", "Maintenance Needed", "Out of Service"].index(machine_data['status'])
             )
             
             if st.form_submit_button("Update Equipment"):
@@ -102,13 +116,13 @@ with st.sidebar:
                 })
                 st.success("Equipment record updated!")
 
-    # Add new equipment form with UNIQUE key
+    # Add new equipment form
     with st.expander("Add New Equipment"):
-        with st.form("new_equipment_form"):  # Changed key
+        with st.form("new_equipment_form"):
             st.write("### Register New Equipment")
-            machine_name = st.text_input("Equipment Name", key="equip_name")
-            machine_type = st.selectbox("Type", ["Tractor", "Combine", "Sprayer", "Planter", "Other"], key="equip_type")
-            initial_hours = st.number_input("Initial Hours", min_value=0, value=0, key="init_hours")
+            machine_name = st.text_input("Equipment Name")
+            machine_type = st.selectbox("Type", ["Tractor", "Combine", "Sprayer", "Planter", "Other"])
+            initial_hours = st.number_input("Initial Hours", min_value=0, value=0)
             
             if st.form_submit_button("Add to Fleet"):
                 if machine_name:
@@ -125,19 +139,30 @@ with st.sidebar:
                 else:
                     st.error("Please enter an equipment name")
 
-    # Data management section
+    # Predictive maintenance data upload
+    with st.expander("Predictive Maintenance"):
+        uploaded_file = st.file_uploader("Upload Maintenance Logs (CSV)", type=['csv'])
+        if uploaded_file:
+            try:
+                maintenance_data = pd.read_csv(uploaded_file)
+                st.session_state.maintenance_data = maintenance_data
+                st.session_state.model = load_or_train_model(maintenance_data)
+                st.success("Maintenance data uploaded and model ready!")
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
+
+    # Data management
     with st.expander("Data Management"):
         st.download_button(
             "📥 Export Equipment Data",
             pd.DataFrame.from_dict(st.session_state.machines, orient='index').to_csv(),
-            file_name="farm_equipment_data.csv",
-            key="export_data"
+            file_name="farm_equipment_data.csv"
         )
         
-        uploaded_file = st.file_uploader("Import Equipment Data", type=['csv'], key="import_data")
-        if uploaded_file:
+        uploaded_config = st.file_uploader("Import Equipment Data", type=['csv'])
+        if uploaded_config:
             try:
-                new_data = pd.read_csv(uploaded_file).to_dict(orient='index')
+                new_data = pd.read_csv(uploaded_config).to_dict(orient='index')
                 st.session_state.machines = new_data
                 st.success("Equipment data imported successfully!")
                 st.experimental_rerun()
@@ -145,7 +170,7 @@ with st.sidebar:
                 st.error(f"Error importing data: {e}")
 
 # Main Dashboard Layout
-tab1, tab2, tab3 = st.tabs(["Overview", "Maintenance", "Telemetry"])
+tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Maintenance", "Telemetry", "Predictive Maintenance"])
 
 with tab1:
     st.header("Equipment Overview")
@@ -207,10 +232,9 @@ with tab3:
     
     if st.checkbox("Enable live telemetry", False, key="telemetry_toggle"):
         telemetry_placeholder = st.empty()
-        stop_simulation = st.button("Stop Simulation", key="stop_sim")
+        stop_simulation = st.button("Stop Simulation")
         
         while not stop_simulation:
-            # Simulate changing values
             for machine in st.session_state.machines:
                 if np.random.random() > 0.9:
                     st.session_state.machines[machine]['status'] = "Maintenance Needed"
@@ -219,7 +243,6 @@ with tab3:
                     st.session_state.machines[machine]['fuel_level'] - np.random.randint(0, 3)
                 )
             
-            # Create telemetry display
             telemetry_data = []
             for machine, data in st.session_state.machines.items():
                 telemetry_data.append({
@@ -250,3 +273,59 @@ with tab3:
                 break
     else:
         st.info("Enable live telemetry to see real-time equipment data")
+
+with tab4:
+    st.header("Predictive Maintenance Analysis")
+    
+    if 'maintenance_data' not in st.session_state:
+        st.warning("Please upload maintenance log data in the sidebar to enable predictive features")
+    else:
+        st.subheader("Maintenance Data Overview")
+        st.dataframe(st.session_state.maintenance_data.head())
+        
+        st.subheader("Model Performance")
+        X = st.session_state.maintenance_data[['Last_Service_Hours_Ago', 'Tasks_Since_Service', 
+                                            'Previous_Failures', 'Hours_Since_Last_Failure']]
+        y = st.session_state.maintenance_data['Failure_Label']
+        predictions = st.session_state.model.predict(X)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Accuracy", f"{accuracy_score(y, predictions)*100:.1f}%")
+        with col2:
+            st.metric("Failure Rate", f"{y.mean()*100:.1f}%")
+        
+        st.subheader("Feature Importance")
+        importances = st.session_state.model.feature_importances_
+        feature_df = pd.DataFrame({
+            'Feature': X.columns,
+            'Importance': importances
+        }).sort_values('Importance', ascending=False)
+        
+        fig = px.bar(feature_df, x='Importance', y='Feature', orientation='h')
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.subheader("Failure Risk Assessment")
+        with st.form("prediction_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                last_service = st.number_input("Hours Since Last Service", min_value=0, value=100)
+                tasks_since = st.number_input("Tasks Since Last Service", min_value=0, value=10)
+            with col2:
+                prev_failures = st.number_input("Previous Failures", min_value=0, value=1)
+                hours_since_failure = st.number_input("Hours Since Last Failure", min_value=0, value=500)
+            
+            if st.form_submit_button("Predict Failure Risk"):
+                input_data = [[last_service, tasks_since, prev_failures, hours_since_failure]]
+                prediction = st.session_state.model.predict(input_data)[0]
+                probability = st.session_state.model.predict_proba(input_data)[0][1]
+                
+                if prediction == 1:
+                    st.error(f"🚨 High failure risk! ({probability*100:.1f}% probability)")
+                else:
+                    st.success(f"✅ Low failure risk ({probability*100:.1f}% probability)")
+                
+                fig = px.bar(x=['Failure Probability'], y=[probability*100], 
+                            range_y=[0,100], text=[f"{probability*100:.1f}%"],
+                            labels={'y': 'Probability (%)', 'x': ''})
+                st.plotly_chart(fig, use_container_width=True)
